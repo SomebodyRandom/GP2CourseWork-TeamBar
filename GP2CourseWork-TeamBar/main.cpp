@@ -1,3 +1,4 @@
+#include <iostream>
 #include <GL/glew.h>
 //maths headers
 #include <glm/glm.hpp>
@@ -8,16 +9,37 @@ using glm::vec3;
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#ifdef __APPLE__
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_opengl.h>
+#include <OpenGL/glu.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <SDL2_ttf/SDL_ttf.h>
+#include <SDL2_image/SDL_image.h>
+#elif WIN32
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <SDL_image.h>
 #include <SDL_ttf.h>
 #include <gl/GLU.h>
+#endif
 
 #include <vector>
 
 #ifdef _DEBUG && WIN32
 const std::string ASSET_PATH = "assets/";
+const std::string SHADER_PATH = "shaders/";
+const std::string TEXTURE_PATH = "textures/";
+const std::string FONT_PATH = "fonts/";
+const std::string MODEL_PATH = "models/";
+#elif __APPLE__
+const std::string ASSET_PATH;
+const std::string SHADER_PATH;
+const std::string TEXTURE_PATH;
+const std::string FONT_PATH;
+const std::string MODEL_PATH;
+#else
+const std::string ASSET_PATH = "/assets/";
 const std::string SHADER_PATH = "shaders/";
 const std::string TEXTURE_PATH = "textures/";
 const std::string FONT_PATH = "fonts/";
@@ -35,7 +57,12 @@ const std::string MODEL_PATH = "models/";
 #include "Camera.h"
 #include "Light.h"
 #include "FBXLoader.h"
+#include "FPSCameraController.h"
+
 #include "SkyboxMaterial.h"
+
+#include "Input.h"
+#include "Timer.h"
 
 
 //SDL Window
@@ -44,7 +71,7 @@ SDL_Window * window = NULL;
 SDL_GLContext glcontext = NULL;
 
 //Window Width
-const int WINDOW_WIDTH = 1000;
+const int WINDOW_WIDTH = 800;
 //Window Height
 const int WINDOW_HEIGHT = 600;
 
@@ -56,6 +83,7 @@ std::vector<GameObject*> displayList;
 GameObject * mainCamera;
 GameObject * mainLight;
 GameObject * skyBox = NULL;
+
 
 void CheckForErrors()
 {
@@ -70,7 +98,7 @@ void InitWindow(int width, int height, bool fullscreen)
 {
 	//Create a window
 	window = SDL_CreateWindow(
-		"Lab 6",             // window title
+		"Lab 9",             // window title
 		SDL_WINDOWPOS_CENTERED,     // x position, centered
 		SDL_WINDOWPOS_CENTERED,     // y position, centered
 		width,                        // width, in pixels
@@ -83,6 +111,12 @@ void InitWindow(int width, int height, bool fullscreen)
 
 void CleanUp()
 {
+	if (skyBox)
+	{
+		skyBox->destroy();
+		delete skyBox;
+		skyBox = NULL;
+	}
 	auto iter = displayList.begin();
 	while (iter != displayList.end())
 	{
@@ -101,6 +135,7 @@ void CleanUp()
 	displayList.clear();
 
 	// clean up, reverse order!!!
+	Input::getInput().destroy();
 	SDL_GL_DeleteContext(glcontext);
 	SDL_DestroyWindow(window);
 	IMG_Quit();
@@ -108,6 +143,11 @@ void CleanUp()
 	SDL_Quit();
 }
 
+void initInput()
+{
+	const std::string inputDBFilename = ASSET_PATH + "gamecontrollerdb.txt";
+	Input::getInput().init(inputDBFilename);
+}
 
 
 //Function to initialise OpenGL
@@ -142,6 +182,9 @@ void initOpenGL()
 	//Enable depth testing
 	glEnable(GL_DEPTH_TEST);
 
+	//Enable backface culling
+	glEnable(GL_CULL_FACE);
+
 	//The depth test to go
 	glDepthFunc(GL_LEQUAL);
 
@@ -166,17 +209,17 @@ void setViewport(int width, int height)
 void createSkyBox()
 {
 	Vertex triangleData[] = {
-			{ vec3(-10.0f, 10.0f, 10.0f) },// Top Left
-			{ vec3(-10.0f, -10.0f, 10.0f) },// Bottom Left
-			{ vec3(10.0f, -10.0f, 10.0f) }, //Bottom Right
-			{ vec3(10.0f, 10.0f, 10.0f) },// Top Right
+		{ vec3(-20.0f, 20.0f, 20.0f) },// Top Left
+		{ vec3(-20.0f, -20.0f, 20.0f) },// Bottom Left
+		{ vec3(20.0f, -20.0f, 20.0f) }, //Bottom Right
+		{ vec3(20.0f, 20.0f, 20.0f) },// Top Right
 
 
-			//back
-			{ vec3(-10.0f, 10.0f, -10.0f) },// Top Left
-			{ vec3(-10.0f, -10.0f, -10.0f) },// Bottom Left
-			{ vec3(10.0, -10.0f, -10.0f) }, //Bottom Right
-			{ vec3(10.0f, 10.0f, -10.0f) }// Top Right
+		//back
+		{ vec3(-20.0f, 20.0f, -20.0f) },// Top Left
+		{ vec3(-20.0f, -20.0f, -20.0f) },// Bottom Left
+		{ vec3(20.0, -20.0f, -20.0f) }, //Bottom Right
+		{ vec3(20.0f, 20.0f, -20.0f) }// Top Right
 	};
 
 
@@ -237,48 +280,52 @@ void createSkyBox()
 	skyBox->setMaterial(material);
 	skyBox->setTransform(t);
 	skyBox->setMesh(pMesh);
+
+	CheckForErrors();
 }
-	
+
 void Initialise()
 {
-	std::string vsPath = ASSET_PATH + SHADER_PATH + "/DirectionalLightTextureVS.glsl";
-	std::string fsPath = ASSET_PATH + SHADER_PATH + "/DirectionalLightTextureFS.glsl";
 	createSkyBox();
+	std::string vsPath = ASSET_PATH + SHADER_PATH + "/PointLighttextureVS.glsl";
+	std::string fsPath = ASSET_PATH + SHADER_PATH + "/PointLighttextureFS.glsl";
 
+	//postProcessor.init(WINDOW_WIDTH, WINDOW_HEIGHT, vsPath, fsPath);
 
 	mainCamera = new GameObject();
 	mainCamera->setName("MainCamera");
 
 	Transform *t = new Transform();
-	t->setPosition(0.0f, 0.0f, 2.0f);
+	t->setPosition(0.0f, 0.0f, -5.0f);
 	mainCamera->setTransform(t);
 
 	Camera * c = new Camera();
 	c->setAspectRatio((float)(WINDOW_WIDTH / WINDOW_HEIGHT));
 	c->setFOV(45.0f);
 	c->setNearClip(0.1f);
-	c->setFarClip(1000.0f);
+	c->setFarClip(10000.0f);
+	vec3 rot = t->getRotation();
+	vec3 lookAt = Camera::calculateLookAtFromAngle(rot);
+	c->setLook(lookAt.x, lookAt.y, lookAt.z);
 
 	mainCamera->setCamera(c);
+
+	//All input for the mouse and keyboard is mainly contrlled in the FPSCameraController class
+	//All changes to the cameras behaviour is handled in that class also
+	FPSCameraController * controller = new FPSCameraController();
+	controller->setCamera(c);
+
+	mainCamera->addComponent(controller);
 	displayList.push_back(mainCamera);
 
 	mainLight = new GameObject();
 	mainLight->setName("MainLight");
 
-	t = new Transform();
-	t->setPosition(0.0f, 0.0f, 0.0f);
-	mainLight->setTransform(t);
-
 	Light * light = new Light();
 	mainLight->setLight(light);
 	displayList.push_back(mainLight);
 
-	//alternative sytanx
-	for (auto iter = displayList.begin(); iter != displayList.end(); iter++)
-	{
-		(*iter)->init();
-	}
-
+	
 	//List of models being used in the scene
 	//Will want to put all of these into an array for convience
 	std::string stationModel = ASSET_PATH + MODEL_PATH + "station.fbx";
@@ -289,157 +336,97 @@ void Initialise()
 	std::string gateModel = ASSET_PATH + MODEL_PATH + "gate.fbx";
 	std::string satelliteModel = ASSET_PATH + MODEL_PATH + "satellite.fbx";
 
-	//Model and Texture for the space station
-	GameObject * go = loadFBXFromFile(stationModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/station_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/station_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(0.0f, 0.0f, -600.0f);
-	displayList.push_back(go);
+	//Loading them models #messy
+	GameObject *go;
+	std::string modelArr[8] = { stationModel, gateModel, gateModel, satelliteModel, shipModel, sunModel, earthModel, moonModel };
+	std::string diffTextureArr[8] = { "/station_diff.png", "/gate_diff.png", "/gate_diff.png", "/satellite_diff.png", "/ship5_diff.png", "/sun1_diff.png", "/earth_diff.png", "/moon_diff.png" };
+	std::string normTextureArr[8] = { "/station_norm.png", "/gate_norm.png", "/gate_norm.png", "/satellite_norm.png", "", "", "/earth_norm.png", "/moon_norm.png" };
+	std::string names[8] = { "Station", "Gate1", "Gate2", "Satelite", "Ship", "Sun", "Earth", "Moon" };
 
-	//Model and texture for Gate 1
-	go = loadFBXFromFile(gateModel);
-	for (int i = 0; i < go->getChildCount(); i++)
+	//If editing size of arrays/adding more object make sure you change array size
+	for (int i = 0; i < 8; i++)
 	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/gate_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/gate_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
+		//Load models and their materials
+		go = loadFBXFromFile(modelArr[i]);
+		for (int q = 0; q < go->getChildCount(); q++)
+		{
+			Material * material = new Material();
+			material->init();
+			material->loadShader(vsPath, fsPath);
+			std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + diffTextureArr[i];
+			material->loadDiffuseMap(diffTexturePath);
+			if (i != 5 || i != 6){
+				std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + normTextureArr[i];
+				material->loadBumpMap(bumpTexturePath);
+			}
+			go->getChild(q)->setMaterial(material);
+		}
+		//Set transforms using conditions, array starts at 0 remember!
+		//Station Transform
+		if (i == 0) {
+			go->getTransform()->setPosition(0.0f, 0.0f, 200.0f);
+		}
+		//Gate 1 Transform
+		if (i == 1) {
+			go->getTransform()->setPosition(80.0f, 0.0f, 100.0f);
+			go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
+		}
+		//Gate 2 Transform
+		if (i == 2){
+			go->getTransform()->setPosition(-80.0f, 0.0f, 300.0f);
+			go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
+		}
+		//Satellite Transform
+		if (i == 3){
+			go->getTransform()->setPosition(5.0f, 0.0f, 200.0f);
+			go->getTransform()->setRotation(0.0f, 45.0f, 0.0f);
+			go->getTransform()->setScale(0.01f, 0.01f, 0.01f);
+		}
+		//Space ship Transform
+		if (i == 4){
+			go->getTransform()->setPosition(0.0f, -5.0f, 200.0f);
+			go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
+			go->getTransform()->setScale(0.002f, 0.002f, 0.002f);
+		}
+		//Sun Transform
+		if (i == 5){
+			go->getTransform()->setPosition(0.0f, 200.0f, 3000.0f);
+			go->getTransform()->setRotation(0.0f, 90.0f, 0.0f);
+			go->getTransform()->setScale(1.0f, 1.0f, 1.0f);
+		}
+		//Earth Transform
+		if (i == 6){
+			go->getTransform()->setPosition(0.0f, 200.0f, 500.0f);
+			go->getTransform()->setRotation(0.0f, 20.0f, 0.0f);
+			go->getTransform()->setScale(0.5f, 0.5f, 0.5f);
+		}
+		//Moon Transform
+		if (i == 7){
+			go->getTransform()->setPosition(-150.0f, -200.0f, 500.0f);
+			go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
+			go->getTransform()->setScale(0.08f, 0.08f, 0.08f);
+		}
+		//Set object names, so that they can be easily accessed later on
+		go->setName(names[i]);
+		//Shove 'em in a list
+		displayList.push_back(go);
 	}
-	go->getTransform()->setPosition(80.0f, 0.0f, -300.0f);
-	go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
-	displayList.push_back(go);
 
-	//Model and texture for Gate 2
-	go = loadFBXFromFile(gateModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/gate_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/gate_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(-80.0f, 0.0f, -300.0f);
-	go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
-	displayList.push_back(go);
-
-	//Model and texture for the satellite
-	go = loadFBXFromFile(satelliteModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/satellite_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/satellite_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(5.0f, 0.0f, -50.0f);
-	go->getTransform()->setRotation(0.0f, 45.0f, 0.0f);
-	go->getTransform()->setScale(0.01f, 0.01f, 0.01f);
-	displayList.push_back(go);
-
-	//Model and texture for the space ship1
-	go = loadFBXFromFile(shipModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/ship5_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(0.0f, -5.0f, -70.0f);
-	go->getTransform()->setRotation(90.0f, 0.0f, 0.0f);
-	go->getTransform()->setScale(0.002f, 0.002f, 0.002f);
-	displayList.push_back(go);
-
-	//Model and Texture for sun model
-	go = loadFBXFromFile(sunModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/sun1_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(0.0f, 200.0f, -1000.0f);
-	go->getTransform()->setRotation(0.0f, 90.0f, 0.0f);
-	go->getTransform()->setScale(0.5f, 0.5f, 0.5f);
-	displayList.push_back(go);
-
-	//Model and texture for the earth model
-	go = loadFBXFromFile(earthModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/earth_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/earth_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
-		go->setName("earth");
-	}
-	go->getTransform()->setPosition(-300.0f, -300.0f, -1000.0f);
-	go->getTransform()->setRotation(0.0f, 0.0f, 0.0f);
-	go->getTransform()->setScale(0.6f, 0.6f, 0.6f);
-	displayList.push_back(go);
-
-	//Model and texture for the moon model
-	go = loadFBXFromFile(moonModel);
-	for (int i = 0; i < go->getChildCount(); i++)
-	{
-		Material * material = new Material();
-		material->init();
-		material->loadShader(vsPath, fsPath);
-		std::string diffTexturePath = ASSET_PATH + TEXTURE_PATH + "/moon_diff.png";
-		material->loadDiffuseMap(diffTexturePath);
-		std::string bumpTexturePath = ASSET_PATH + TEXTURE_PATH + "/moon_norm.png";
-		material->loadBumpMap(bumpTexturePath);
-		go->getChild(i)->setMaterial(material);
-	}
-	go->getTransform()->setPosition(-150.0f, -200.0f, -1000.0f);
-	go->getTransform()->setRotation(40.0f, 0.0f, 0.0f);
-	go->getTransform()->setScale(0.08f, 0.08f, 0.08f);
-	displayList.push_back(go);
+	Timer::getTimer().start();
 }
-
-
-
 
 //Function to update the game state
 void update()
 {
-	skyBox->update();
 
+	Timer::getTimer().update();
+	skyBox->update();
 	//alternative sytanx
 	for (auto iter = displayList.begin(); iter != displayList.end(); iter++)
 	{
 		(*iter)->update();
 	}
+	Input::getInput().update();
 }
 
 void renderGameObject(GameObject * pObject)
@@ -451,6 +438,7 @@ void renderGameObject(GameObject * pObject)
 
 	Mesh * currentMesh = pObject->getMesh();
 	Transform * currentTransform = pObject->getTransform();
+	//we know is going to be a standard material
 	Material * currentMaterial = (Material*)pObject->getMaterial();
 
 	if (currentMesh && currentMaterial && currentTransform)
@@ -465,6 +453,7 @@ void renderGameObject(GameObject * pObject)
 		GLint diffuseMatLocation = currentMaterial->getUniformLocation("diffuseMaterialColour");
 		GLint diffuseLightLocation = currentMaterial->getUniformLocation("diffuseLightColour");
 		GLint lightDirectionLocation = currentMaterial->getUniformLocation("lightDirection");
+		GLint lightPositionLocation = currentMaterial->getUniformLocation("lightPosition");
 		GLint specularMatLocation = currentMaterial->getUniformLocation("specularMaterialColour");
 		GLint specularLightLocation = currentMaterial->getUniformLocation("specularLightColour");
 		GLint specularpowerLocation = currentMaterial->getUniformLocation("specularPower");
@@ -472,6 +461,7 @@ void renderGameObject(GameObject * pObject)
 		GLint diffuseTextureLocation = currentMaterial->getUniformLocation("diffuseMap");
 		GLint specTextureLocation = currentMaterial->getUniformLocation("specMap");
 		GLint bumpTextureLocation = currentMaterial->getUniformLocation("bumpMap");
+		GLint heightTextureLocation = currentMaterial->getUniformLocation("heightMap");
 		Camera * cam = mainCamera->getCamera();
 		Light* light = mainLight->getLight();
 
@@ -487,6 +477,7 @@ void renderGameObject(GameObject * pObject)
 		vec4 diffuseLightColour = light->getDiffuseColour();
 		vec4 specularLightColour = light->getSpecularColour();
 		vec3 lightDirection = light->getDirection();
+		vec3 lightPosition = light->getPosition();
 
 		vec3 cameraPosition = mainCamera->getTransform()->getPosition();
 
@@ -498,6 +489,7 @@ void renderGameObject(GameObject * pObject)
 		glUniform4fv(diffuseMatLocation, 1, glm::value_ptr(diffuseMaterialColour));
 		glUniform4fv(diffuseLightLocation, 1, glm::value_ptr(diffuseLightColour));
 		glUniform3fv(lightDirectionLocation, 1, glm::value_ptr(lightDirection));
+		glUniform3fv(lightPositionLocation, 1, glm::value_ptr(lightPosition));
 
 		glUniform4fv(specularMatLocation, 1, glm::value_ptr(specularMaterialColour));
 		glUniform4fv(specularLightLocation, 1, glm::value_ptr(specularLightColour));
@@ -508,8 +500,11 @@ void renderGameObject(GameObject * pObject)
 		glUniform1i(diffuseTextureLocation, 0);
 		glUniform1i(specTextureLocation, 1);
 		glUniform1i(bumpTextureLocation, 2);
+		glUniform1i(heightTextureLocation, 3);
 
 		glDrawElements(GL_TRIANGLES, currentMesh->getIndexCount(), GL_UNSIGNED_INT, 0);
+
+		currentMaterial->unbind();
 	}
 
 	for (int i = 0; i < pObject->getChildCount(); i++)
@@ -537,7 +532,9 @@ void renderSkyBox()
 		GLint cubeTextureLocation = currentMaterial->getUniformLocation("cubeTexture");
 
 		glUniformMatrix4fv(projectionLocation, 1, GL_FALSE, glm::value_ptr(cam->getProjection()));
-		glUniformMatrix4fv(viewLocation, 1, GL_FALSE, glm::value_ptr(cam->getView()));
+		mat4 rotationY = glm::rotate(mat4(1.0f), mainCamera->getTransform()->getRotation().y, vec3(0.0f, 1.0f, 0.0f));
+		mat4 rotationX = glm::rotate(mat4(1.0f), mainCamera->getTransform()->getRotation().x, vec3(1.0f, 0.0f, 0.0f));
+		glUniformMatrix4fv(viewLocation, 1, GL_FALSE, glm::value_ptr(rotationY*rotationX));
 		glUniform4fv(cameraLocation, 1, glm::value_ptr(mainCamera->getTransform()->getPosition()));
 		glUniform1i(cubeTextureLocation, 0);
 
@@ -551,8 +548,9 @@ void renderSkyBox()
 //Function to render(aka draw)
 void render()
 {
-	//old imediate mode!
-	//Set the clear colour(background)
+	//Bind Framebuffer
+	//postProcessor.bind();
+
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth(1.0f);
 	//clear the colour and depth buffer
@@ -568,10 +566,28 @@ void render()
 
 	SDL_GL_SwapWindow(window);
 }
-	
+
+
+
 //Main Method
 int main(int argc, char * arg[])
 {
+
+#ifdef __APPLE__
+	CFBundleRef mainBundle = CFBundleGetMainBundle();
+	CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
+	char path[PATH_MAX];
+	if (!CFURLGetFileSystemRepresentation(resourcesURL, TRUE, (UInt8 *)path, PATH_MAX))
+	{
+		// error!
+	}
+	CFRelease(resourcesURL);
+
+	chdir(path);
+	std::cout << "Current Path: " << path << std::endl;
+#endif
+
+
 	// init everyting - SDL, if it is nonzero we have a problem
 	if (SDL_Init(SDL_INIT_EVERYTHING) != 0)
 	{
@@ -598,6 +614,7 @@ int main(int argc, char * arg[])
 	//Set our viewport
 	setViewport(WINDOW_WIDTH, WINDOW_HEIGHT);
 
+	initInput();
 	Initialise();
 
 	//Value to hold the event generated by SDL
@@ -605,20 +622,54 @@ int main(int argc, char * arg[])
 	//Game Loop
 	while (running)
 	{
+		SDL_SetRelativeMouseMode(SDL_TRUE);
 		//While we still have events in the queue
-		while (SDL_PollEvent(&event)) {
-			//Get event type
-			if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
-				//set our boolean which controls the loop to false
+		while (SDL_PollEvent(&event)) 
+		{
+			switch (event.type)
+			{
+			case SDL_QUIT:
+			case SDL_WINDOWEVENT_CLOSE:
+			{
 				running = false;
+				break;
+			}
+			case SDL_KEYDOWN:
+			{
+				Input::getInput().getKeyboard()->setKeyDown(event.key.keysym.sym);
+				if (Input::getInput().getKeyboard()->isKeyDown(SDLK_ESCAPE))
+				{
+					running = false;
+				}
+				break;
+			}
+			case SDL_KEYUP:
+			{
+				Input::getInput().getKeyboard()->setKeyUp(event.key.keysym.sym);
+				break;
+			}
+			case SDL_MOUSEMOTION:
+			{
+				Input::getInput().getMouse()->setMousePosition(event.motion.x, event.motion.y, event.motion.xrel, event.motion.yrel);
+				break;
+			}
+			case SDL_MOUSEBUTTONDOWN:
+			{
+				Input::getInput().getMouse()->setMouseButtonDown(event.button.button);
+				break;
+			}
+			case SDL_MOUSEBUTTONUP:
+			{
+				Input::getInput().getMouse()->setMouseButtonUp(event.button.button);
+				break;
 			}
 		}
+			
+	}
 		update();
 		//render
 		render();
-	}
-	
+}
 	CleanUp();
-
 	return 0;
 }

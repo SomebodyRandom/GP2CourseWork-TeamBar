@@ -4,7 +4,8 @@ Light::Light()
 {
 	m_DiffuseColour = vec4(1.0f, 1.0f, 1.0f, 1.0f);
 	m_SpecularColour = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-	m_LightDirection = vec3(0.0f, 0.5f, 0.5f);
+	m_LightDirection = vec3(0.0f, 0.0f, 0.0f);
+	m_LightPosition = vec3(10.0f, 10.0f, 10.0f);
 	m_Type = "Light";
 }
 
@@ -41,4 +42,14 @@ vec3& Light::getDirection()
 void Light::setDirection(float x, float y, float z)
 {
 	m_LightDirection = vec3(x, y, z);
+}
+
+vec3& Light::getPosition()
+{
+	return m_LightPosition;
+}
+
+void Light::setPosition(float x, float y, float z)
+{
+	m_LightPosition = vec3(x, y, z);
 }

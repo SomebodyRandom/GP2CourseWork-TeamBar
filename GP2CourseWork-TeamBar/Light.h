@@ -21,11 +21,15 @@ public:
 
 	vec3& getDirection();
 	void setDirection(float x, float y, float z);
+
+	vec3& getPosition();
+	void setPosition(float x, float y, float z);
 private:
 	vec4 m_DiffuseColour;
 	vec4 m_SpecularColour;
 
 	vec3 m_LightDirection;
+	vec3 m_LightPosition;
 protected:
 };
 
